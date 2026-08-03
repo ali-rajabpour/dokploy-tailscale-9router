@@ -24,9 +24,10 @@ Read from source at `decolua/9router@master` rather than from documentation.
   (`src/lib/db/repos/settingsRepo.js:20`).
 - `/v1`, `/v1beta`, `/api/v1`, and `/codex` are public prefixes, but remote
   callers must present a valid API key. Loopback callers bypass that check.
-- `LOCAL_ONLY_PATHS` — routes that spawn child processes or read host secrets
-  (`/api/mcp/`, `/api/cli-tools/*`, `/api/tunnel/*`, `/api/auth/reset-password`,
-  `/api/headroom/*`) — returns 403 to anything not local.
+- `LOCAL_ONLY_PATHS`, covering routes that spawn child processes or read host
+  secrets (`/api/mcp/`, `/api/cli-tools/*`, `/api/tunnel/*`,
+  `/api/auth/reset-password`, `/api/headroom/*`), returns 403 to anything not
+  local.
 - `custom-server.js` deletes client-supplied `x-9r-real-ip`, `x-9r-via-proxy`,
   and `x-forwarded-for` before stamping values derived from the TCP socket, so
   header spoofing cannot forge a loopback origin.
@@ -36,8 +37,8 @@ Read from source at `decolua/9router@master` rather than from documentation.
 Findings that shaped the design:
 
 1. `INITIAL_PASSWORD` falls back to `123456`. Must be set explicitly.
-2. `JWT_SECRET`, when unset, is generated into `$DATA_DIR/jwt-secret` — safe
-   only while the volume persists.
+2. `JWT_SECRET`, when unset, is generated into `$DATA_DIR/jwt-secret`, which is
+   safe only while the volume persists.
 3. `REQUIRE_API_KEY` is documented in upstream's `.env.example` but has **no
    references anywhere in `src/`**. It is dead. API-key enforcement for remote
    `/v1` callers is unconditional and does not depend on it. Do not rely on
@@ -49,14 +50,14 @@ Findings that shaped the design:
    argument against fronting the service with Traefik.
 
 Conclusion: safe to run, given a strong bootstrap password and a persistent
-volume — provided it is not exposed publicly.
+volume, provided it is not exposed publicly.
 
 ## Options considered
 
 | Option | Verdict |
 | --- | --- |
 | Public domain, Traefik, 9Router auth only | Rejected. One layer in front of live provider OAuth tokens. |
-| Public domain + Cloudflare Access on dashboard paths | Rejected. Leaks the origin IP, and `:443` answers the world — anyone who finds the address reaches every other vhost on the box directly. |
+| Public domain + Cloudflare Access on dashboard paths | Rejected. Leaks the origin IP, and `:443` answers the world, so anyone who finds the address reaches every other vhost on the box directly. |
 | Cloudflare Tunnel + Access | Rejected. IDEs cannot carry Access identity, so `/v1` needs a bypass rule and reverts to API-key-only. Decisive objection: TLS terminates at Cloudflare's edge, so prompts, source, and tokens transit their infrastructure in plaintext. |
 | Tailscale installed on the host | Rejected. Adds a root daemon and rewrites `/etc/resolv.conf` on a production server. |
 | **Tailscale as a sidecar container** | **Chosen.** |
@@ -119,7 +120,7 @@ deployment.**
 
 Headroom stays outside the shared namespace on purpose. Inside it, it could
 reach `127.0.0.1:20128` without an `X-Forwarded-For` header and be treated as
-a local request — unlocking keyless `/v1`, `/api/auth/reset-password`, and the
+a local request, unlocking keyless `/v1`, `/api/auth/reset-password`, and the
 process-spawning routes. On the Docker bridge it reaches 9Router at a
 non-loopback address and is treated as remote. It is a third-party image and
 gets no implicit trust.
@@ -136,7 +137,7 @@ The sidecar runs in userspace mode (`TS_USERSPACE=true`), requiring neither
 | `9router-data` → `/app/data` | `db/data.sqlite`, provider OAuth tokens, API keys, `jwt-secret`, certificates, backups | the entire configuration |
 | `tailscale-state` → `/var/lib/tailscale` | node identity, serve config, TLS certificate | same hostname and certificate after restart, no re-authentication |
 
-The auth key is consumed on first run only. `--advertise-tags=tag:9router`
+The auth key is consumed on first run only. `--advertise-tags=tag:nine-router`
 disables key expiry for the node, so a stack left stopped for months still
 restarts cleanly.
 
@@ -155,7 +156,7 @@ incidental.
 
 Accepted risk: tracking `:latest` with an unattended redeploy means an upstream
 compromise reaches the provider OAuth tokens without review. Mitigation if that
-becomes unacceptable — pin a version tag and delete the scheduled job.
+becomes unacceptable: pin a version tag and delete the scheduled job.
 
 ## Verification
 

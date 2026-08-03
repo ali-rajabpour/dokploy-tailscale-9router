@@ -1,4 +1,4 @@
-# Secrets — never commit. Values belong in Dokploy's Environment tab.
+# Secrets. Never commit these; values belong in Dokploy's Environment tab.
 .env
 .env.*
 !.env.example

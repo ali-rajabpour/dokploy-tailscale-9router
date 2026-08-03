@@ -7,7 +7,7 @@ projects on the VPS are unaffected.
 ## Why this shape
 
 `tailscale serve` terminates TLS and proxies to `127.0.0.1:20128` inside a
-shared network namespace. 9Router grants **local** requests privileged access —
+shared network namespace. 9Router grants **local** requests privileged access:
 keyless `/v1`, password reset, process-spawning routes. That would be a hole,
 except `tailscale serve` sets `X-Forwarded-For` to the client's tailnet address
 (`ipn/ipnlocal/serve.go`, `addProxyForwardedHeaders`), and 9Router's
@@ -30,16 +30,16 @@ In the Tailscale admin console:
 
    ```jsonc
    {
-     "tagOwners": { "tag:9router": ["autogroup:admin"] },
+     "tagOwners": { "tag:nine-router": ["autogroup:admin"] },
      "acls": [
        // Only your own devices, only the serve port.
-       { "action": "accept", "src": ["autogroup:member"], "dst": ["tag:9router:443"] }
+       { "action": "accept", "src": ["autogroup:member"], "dst": ["tag:nine-router:443"] }
      ]
    }
    ```
 
 4. **Settings → Device approval**: on.
-5. **Keys → Generate auth key**: reusable, non-ephemeral, tagged `tag:9router`.
+5. **Keys → Generate auth key**: reusable, non-ephemeral, tagged `tag:nine-router`.
    Copy it; it is shown once.
 6. MFA on the identity provider backing your Tailscale account.
 
@@ -70,7 +70,7 @@ the volume line in `docker-compose.yml` to match.
 
 ## 4. Environment variables
 
-**Environment tab** — these live in Dokploy, never in a file on the server:
+**Environment tab**. These live in Dokploy, never in a file on the server:
 
 ```
 TS_AUTHKEY=tskey-auth-...
@@ -92,7 +92,7 @@ Deploy. Then, from a machine on the tailnet:
 
 Expected: `/v1/models` → 401, `/api/mcp/` → 403, `/api/settings` → 401,
 `/dashboard` → 307. A 200 on the first check means the loopback hop leaked
-local privileges — stop and fix before connecting any provider.
+local privileges. Stop and fix before connecting any provider.
 
 On the VPS itself:
 
@@ -119,7 +119,7 @@ API Key:  <from the dashboard>
 ## 7. Auto-update
 
 You cannot webhook this. Docker Hub webhooks are configured by the repository
-owner, and `decolua/9router` is not yours — there is no push event to
+owner, and `decolua/9router` is not yours, so there is no push event to
 subscribe to. Watchtower would work but requires mounting the Docker socket,
 which is root-equivalent on a host running your other projects. Not worth it.
 
@@ -137,7 +137,7 @@ Polling instead. **Dokploy → Schedule Jobs → Create**:
 
 `pull_policy: always` in the compose file makes the re-pull explicit rather
 than incidental. Confirm the exact endpoint name against your panel's
-`/swagger` — it has been `compose.deploy` in recent versions.
+`/swagger`. It has been `compose.deploy` in recent versions.
 
 **Understand what you turned on.** Tracking `:latest` with an unattended
 redeploy means an upstream compromise reaches your provider OAuth tokens
@@ -162,8 +162,9 @@ Do not delete these volumes. `9router-data` is your entire configuration; if
 ## Notes
 
 - The dashboard is also reachable at `http://<tailnet-ip>:20128`, bypassing
-  `serve`. Still safe — the peer address is non-loopback, so no local
-  privileges — but the ACL above restricts the tailnet to `:443` anyway.
+  `serve`. Still safe, since the peer address is non-loopback and so carries
+  no local privileges, but the ACL above restricts the tailnet to `:443`
+  anyway.
 - `REQUIRE_API_KEY` appears in upstream's `.env.example` and is dead code: no
   references anywhere in `src/`. API-key enforcement on `/v1` for remote
   callers is unconditional. Do not rely on that variable.

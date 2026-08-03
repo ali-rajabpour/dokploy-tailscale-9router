@@ -12,7 +12,7 @@ about the rest of your server changes.
 ## Why this exists
 
 I run a self-hosted VPS with Dokploy, hosting a number of unrelated production
-projects. I wanted 9Router on it — an AI router that fronts Claude Code,
+projects. I wanted 9Router on it: an AI router that fronts Claude Code,
 Cursor, Copilot, and friends, giving them fallback across providers and
 compressing tool output to save tokens.
 
@@ -30,7 +30,7 @@ every provider you connect. Losing it means someone else spending your Claude
 and Copilot subscriptions, and walking away with the tokens.
 
 I read the upstream authorization model rather than trusting the README, and
-it is genuinely well built — deny-by-default on `/api/*`, JWT on the dashboard,
+it is genuinely well built: deny-by-default on `/api/*`, JWT on the dashboard,
 progressive login lockout, and a set of process-spawning routes restricted to
 local callers with client-supplied forwarding headers stripped so they cannot
 be spoofed.
@@ -38,7 +38,7 @@ be spoofed.
 But one thing does not go away. The `/v1` endpoint has to stay reachable by
 IDEs and CLI tools that speak plain HTTP with a bearer token. No identity proxy
 can gate that path without breaking every client. Cloudflare Access, Zero
-Trust, an OAuth proxy — all of them end up with a bypass rule on `/v1`, and
+Trust, an OAuth proxy; all of them end up with a bypass rule on `/v1`, and
 you are back to a single API key standing between the public internet and your
 provider tokens. Cloudflare Tunnel has a second problem for this workload:
 TLS terminates at their edge, so every prompt, every file your agent reads, and
@@ -51,7 +51,7 @@ Watchtower, wants the Docker socket mounted. On a box running everything else
 I own, that is root-equivalent access traded for update convenience. No.
 
 **4. I stop this service when I am not using it.** Restarting had to bring
-back the same configuration, the same provider logins, and the same hostname —
+back the same configuration, the same provider logins, and the same hostname,
 not a fresh install asking me to reconnect eleven providers.
 
 ## What this repository does about it
@@ -83,7 +83,7 @@ tailnet ──TLS 443──> [tailscale sidecar] ──127.0.0.1:20128──> [9
 ### The subtle part
 
 Proxying over loopback is exactly the thing that could have broken this.
-9Router grants *local* requests elevated access — `/v1` without an API key,
+9Router grants *local* requests elevated access: `/v1` without an API key,
 plus password reset and the process-spawning routes. A naive loopback proxy
 would hand every tailnet visitor those privileges.
 
@@ -125,10 +125,11 @@ treated as the remote client it is.
 ## Quick start
 
 1. In the Tailscale admin console, enable MagicDNS and HTTPS Certificates, add
-   an ACL for `tag:9router`, and generate a reusable auth key carrying that tag.
+   an ACL for `tag:nine-router`, and generate a reusable auth key carrying that
+   tag.
 2. Create a Dokploy **Compose** project from this repository. Leave
-   **Isolated Deployments off** — it injects a `networks:` key that is invalid
-   alongside `network_mode`.
+   **Isolated Deployments off**, because it injects a `networks:` key that is
+   invalid alongside `network_mode`.
 3. Add `serve.json` as a Dokploy File Mount.
 4. Set `TS_AUTHKEY`, `JWT_SECRET`, and `INITIAL_PASSWORD` in the Environment
    tab.
@@ -144,7 +145,7 @@ configuration, are in [DEPLOY.md](DEPLOY.md).
 
 - A VPS running Dokploy
 - A Tailscale account (the free tier is sufficient)
-- Tailscale installed on each client machine — Windows, macOS, Linux, iOS, and
+- Tailscale installed on each client machine. Windows, macOS, Linux, iOS, and
   Android all have first-class clients
 
 ## Trade-offs

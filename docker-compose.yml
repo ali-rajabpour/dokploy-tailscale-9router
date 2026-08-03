@@ -12,7 +12,7 @@ services:
       TS_USERSPACE: "true"
       # Tagged nodes have key expiry disabled, so the stack survives being
       # stopped for months without needing re-authentication.
-      TS_EXTRA_ARGS: --advertise-tags=tag:9router
+      TS_EXTRA_ARGS: --advertise-tags=tag:nine-router
     volumes:
       - tailscale-state:/var/lib/tailscale
       - ../files/serve.json:/config/serve.json:ro
