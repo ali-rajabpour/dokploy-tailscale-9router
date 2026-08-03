@@ -148,7 +148,9 @@ treated as the remote client it is.
 2. Create a Dokploy **Compose** project from this repository. Leave
    **Isolated Deployments off**, because it injects a `networks:` key that is
    invalid alongside `network_mode`.
-3. Add `serve.json` as a Dokploy File Mount.
+3. Add a Dokploy File Mount with **File Path** `serve.json` and the contents of
+   `serve.json` as its content. Mount the file this way rather than from the
+   repository, which Dokploy re-clones on every deploy.
 4. Set `TS_AUTHKEY`, `JWT_SECRET`, and `INITIAL_PASSWORD` in the Environment
    tab.
 5. Deploy, then run `./verify.sh 9router.<your-tailnet>.ts.net`.

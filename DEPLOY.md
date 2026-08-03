@@ -95,15 +95,26 @@ stopped for months and come back without re-authentication.
 
 ## 3. File mount for the serve config
 
-**Advanced → Volumes → Add File Mount**:
+**Advanced → Volumes → Add File Mount**. Two fields, both required:
 
-- Content: the contents of `serve.json` from this directory
-- File path: `serve.json`
+| Field | Value |
+| --- | --- |
+| **File Path** | `serve.json` |
+| **Content** | the contents of `serve.json` from this repository |
 
-Dokploy writes it into the project's `files/` directory, which the compose
-file references as `../files/serve.json`. Confirm the resulting path shown in
-the Dokploy UI matches; if your Dokploy version places it elsewhere, adjust
-the volume line in `docker-compose.yml` to match.
+File Path is a bare filename. No leading slash, no directory, no `../files/`
+prefix. Dokploy writes it to `<project>/files/serve.json`, which is why
+`docker-compose.yml` mounts it as `../files/serve.json`.
+
+Confirm the path Dokploy reports after saving. If your version places it
+elsewhere, adjust the volume line in `docker-compose.yml` to match.
+
+**Do not mount the repository's `serve.json` directly.** It is committed here
+so the configuration is versioned and reviewable, but Dokploy runs `git clone`
+into a cleaned directory on every deployment, so a mount like
+`./serve.json:/config/serve.json` works once and then breaks. With the
+scheduled redeploy job in section 7, that happens on a cron. File Mounts live
+outside the cloned directory and survive.
 
 ## 4. Environment variables
 
