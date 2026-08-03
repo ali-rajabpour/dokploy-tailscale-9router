@@ -124,9 +124,27 @@ treated as the remote client it is.
 
 ## Quick start
 
-1. In the Tailscale admin console, enable MagicDNS and HTTPS Certificates, add
-   an ACL for `tag:nine-router`, and generate a reusable auth key carrying that
-   tag.
+1. In the Tailscale admin console, enable MagicDNS and HTTPS Certificates, then
+   replace the default allow-everything policy with:
+
+   ```jsonc
+   {
+     "tagOwners": { "tag:nine-router": ["autogroup:admin"] },
+     "grants": [
+       {
+         "src": ["autogroup:member"],
+         "dst": ["tag:nine-router"],
+         "ip":  ["tcp:443"],
+       },
+     ],
+   }
+   ```
+
+   The tag goes in `dst` only. Putting it in `src` as well grants the node
+   access to itself and your own machines nothing. On older tailnets that use
+   `acls` instead of `grants`, see [DEPLOY.md](DEPLOY.md) for the equivalent.
+
+   Then generate a reusable, non-ephemeral auth key carrying `tag:nine-router`.
 2. Create a Dokploy **Compose** project from this repository. Leave
    **Isolated Deployments off**, because it injects a `networks:` key that is
    invalid alongside `network_mode`.

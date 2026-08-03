@@ -28,15 +28,52 @@ In the Tailscale admin console:
 2. **DNS → HTTPS Certificates**: enabled. Required for `serve` to issue a cert.
 3. **Access controls**: define the tag and restrict who may reach it.
 
+   New tailnets ship with a default rule permitting everything
+   (`src: ["*"]`, `dst: ["*"]`, `ip: ["*"]`). Replace it. Recent tailnets use
+   the `grants` syntax:
+
+   ```jsonc
+   {
+     "tagOwners": { "tag:nine-router": ["autogroup:admin"] },
+     "grants": [
+       // Your devices reach the router on the serve port. Nothing else.
+       {
+         "src": ["autogroup:member"],
+         "dst": ["tag:nine-router"],
+         "ip":  ["tcp:443"],
+       },
+     ],
+   }
+   ```
+
+   Older tailnets use `acls`, where the port belongs on `dst` and there is no
+   `ip` field:
+
    ```jsonc
    {
      "tagOwners": { "tag:nine-router": ["autogroup:admin"] },
      "acls": [
-       // Only your own devices, only the serve port.
-       { "action": "accept", "src": ["autogroup:member"], "dst": ["tag:nine-router:443"] }
-     ]
+       { "action": "accept", "src": ["autogroup:member"], "dst": ["tag:nine-router:443"] },
+     ],
    }
    ```
+
+   Use one style or the other, not both for the same traffic.
+
+   Two mistakes to avoid:
+
+   - **Do not put `tag:nine-router` in `src`.** The router never initiates
+     connections to your tailnet, it only receives them. A rule whose `src` and
+     `dst` are both the tag grants the node access to itself and grants your
+     laptops nothing.
+   - **Tagged devices lose their owner's implicit access.** Once the container
+     is tagged, the account that authenticated it no longer reaches it by
+     default. The rule above is what restores access, so it is required, not
+     optional.
+
+   `tcp:443` is deliberate: it is the only port `tailscale serve` listens on,
+   and it keeps `:20128` unreachable even though 9Router binds `0.0.0.0` inside
+   the namespace.
 
 4. **Settings → Device approval**: on.
 5. **Keys → Generate auth key**: reusable, non-ephemeral, tagged `tag:nine-router`.
