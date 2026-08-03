@@ -132,7 +132,41 @@ bcrypt hash in SQLite takes precedence.
 
 ## 5. Deploy and verify
 
-Deploy. Then, from a machine on the tailnet:
+Deploy, then confirm the sidecar actually came up. Dokploy renders every
+stderr line as an error and `tailscaled` logs everything to stderr, so read
+the state rather than the log colour:
+
+```bash
+docker ps --format '{{.Names}}' | grep -i tailscale
+docker exec <name> tailscale status         # node active, has an address
+docker exec <name> tailscale serve status   # https://... -> http://127.0.0.1:20128
+```
+
+### Expected log noise
+
+These appear on every start and are not faults:
+
+| Message | Why |
+| --- | --- |
+| `tstun: error initializing tun dev stats polling: no such device` | Userspace mode has no TUN device to poll. |
+| `magicsock: failed to force-set UDP read/write buffer size ... operation not permitted` | Raising socket buffers needs `NET_ADMIN`, which is deliberately not granted. Affects throughput only. |
+| `health(wantrunning-false): Tailscale is stopped.` | Logged before `tailscale up` runs. |
+| `health(warming-up): Tailscale is starting.` | Transient. |
+| `control: lite map update error ... 409: superseded by another update` | Two control-plane map requests raced at startup. Harmless once; investigate only if it repeats. |
+| Headroom printing `Claude Code: ANTHROPIC_BASE_URL=...` | Its usage banner, written to stderr. Means it is up. |
+
+### If nothing routes
+
+- **Device approval.** Section 1 turns it on, so a freshly authenticated node
+  sits unapproved and unreachable until you approve it under **Machines**.
+  This is the usual cause.
+- **No certificate.** `serve` fetches it lazily on the first HTTPS request, so
+  a slow first load is normal. If it never issues, **DNS → HTTPS Certificates**
+  is off.
+- **Connection refused through `serve`.** 9Router is still starting; it boots
+  slower than the sidecar.
+
+Then, from a machine on the tailnet:
 
 ```bash
 ./verify.sh 9router.<your-tailnet>.ts.net
