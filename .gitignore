@@ -1,0 +1,45 @@
+# Secrets — never commit. Values belong in Dokploy's Environment tab.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+auth.json
+tskey*
+secrets.*
+
+# Tailscale runtime state (node identity, certificates)
+tailscale-state/
+var/lib/tailscale/
+
+# 9Router runtime data (SQLite database, provider OAuth tokens, backups)
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.db
+
+# Editor and IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# Logs and scratch output
+*.log
+logs/
+result.json
+tmp/
