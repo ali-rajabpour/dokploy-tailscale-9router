@@ -1,0 +1,37 @@
+services:
+  # SSH access mode. No Tailscale sidecar, no serve, no tailnet.
+  # The port is bound to the host's loopback interface, so the only way in is
+  # an SSH tunnel from a machine that already has shell access to the VPS.
+  9router:
+    image: decolua/9router:latest
+    pull_policy: always
+    restart: unless-stopped
+    ports:
+      # 127.0.0.1 prefix is load-bearing. Without it Docker publishes on
+      # 0.0.0.0 and punches a hole through the host firewall.
+      - "127.0.0.1:20128:20128"
+    volumes:
+      - 9router-data:/app/data
+    environment:
+      DATA_DIR: /app/data
+      PORT: "20128"
+      HOSTNAME: 0.0.0.0
+      NODE_ENV: production
+      # Transport is SSH rather than TLS, so the browser sees plain http and
+      # would never send a cookie marked Secure back.
+      AUTH_COOKIE_SECURE: "false"
+      JWT_SECRET: ${JWT_SECRET}
+      INITIAL_PASSWORD: ${INITIAL_PASSWORD}
+      # Internal self-call for the cloud sync job.
+      BASE_URL: http://127.0.0.1:20128
+      HEADROOM_URL: http://headroom:8787
+      ENABLE_REQUEST_LOGS: "false"
+
+  headroom:
+    image: ghcr.io/chopratejas/headroom:latest
+    restart: unless-stopped
+    expose:
+      - "8787"
+
+volumes:
+  9router-data:

@@ -1,11 +1,12 @@
-# dokploy-tailscale-9router
+# dokploy-9router-private
 
 A hardened [9Router](https://github.com/decolua/9router) deployment for
-[Dokploy](https://dokploy.com), reachable only over a private
-[Tailscale](https://tailscale.com) network.
+[Dokploy](https://dokploy.com), reachable only by you. Two access modes,
+[Tailscale](https://tailscale.com) or an SSH tunnel, sharing one stack and one
+database.
 
-No public DNS record. No Traefik route. No ports published on the host. Nothing
-about the rest of your server changes.
+No public DNS record. No Traefik route. Nothing exposed to the internet.
+Nothing about the rest of your server changes.
 
 ---
 
@@ -54,12 +55,20 @@ I own, that is root-equivalent access traded for update convenience. No.
 back the same configuration, the same provider logins, and the same hostname,
 not a fresh install asking me to reconnect eleven providers.
 
+Then a fifth problem showed up after the first version shipped: **Tailscale is
+filtered where I live.** Not throttled, not slow. The TLS handshake gets an
+injected RST the moment the ClientHello carries an SNI under `tailscale.com`,
+and since both the control plane and every DERP relay live there, the client
+has nowhere to connect. That is what the second access mode is for.
+
 ## What this repository does about it
 
-9Router runs inside a Tailscale sidecar's network namespace. `tailscale serve`
-terminates TLS and forwards to it over loopback. The service is reachable at
-`https://9router.<your-tailnet>.ts.net` from your own devices and from nowhere
-else.
+Two ways in. Same containers, same volumes, same security properties. You pick
+one by choosing which compose file Dokploy builds.
+
+**Tailscale.** 9Router runs inside a Tailscale sidecar's network namespace.
+`tailscale serve` terminates TLS and forwards to it over loopback. Reachable at
+`https://9router.<your-tailnet>.ts.net` from your own devices and nowhere else.
 
 ```
 tailnet ──TLS 443──> [tailscale sidecar] ──127.0.0.1:20128──> [9router]
@@ -67,28 +76,40 @@ tailnet ──TLS 443──> [tailscale sidecar] ──127.0.0.1:20128──> [9
                             └── docker bridge ────────────> [headroom :8787]
 ```
 
-- **Your host's networking is untouched.** `tailscale0` exists only inside the
-  container namespace. No root daemon, no rewritten `/etc/resolv.conf`, no new
-  firewall chains, nothing left behind if you delete the stack. The sidecar
-  runs in userspace mode, so it needs neither `NET_ADMIN` nor `/dev/net/tun`.
-- **Traefik is not involved at all.** The label problem disappears rather than
+**SSH tunnel.** No sidecar. The port binds to the VPS's loopback interface, and
+you reach it through `ssh -L` from a machine that already has shell access.
+Reachable at `http://127.0.0.1:20128` on that machine.
+
+```
+client ──SSH──> [vps 127.0.0.1:20128] ──docker bridge──> [9router] ──> [headroom :8787]
+```
+
+Common to both:
+
+- **Your host's networking is untouched.** In Tailscale mode `tailscale0`
+  exists only inside the container namespace: no root daemon, no rewritten
+  `/etc/resolv.conf`, no new firewall chains, nothing left behind if you delete
+  the stack. The sidecar runs in userspace mode, so it needs neither
+  `NET_ADMIN` nor `/dev/net/tun`. In SSH mode there is no VPN at all.
+- **Traefik is not involved.** The label problem disappears rather than
   getting solved.
-- **Two layers on every request.** Tailnet membership, then 9Router's own
-  password and API key.
+- **Two layers on every request.** Tailnet membership or SSH credentials,
+  then 9Router's own password and API key.
 - **Updates poll instead of listening.** A Dokploy scheduled job calls
   Dokploy's own API to redeploy. No Docker socket exposed.
 - **State survives.** Named volumes keep the database, provider tokens, node
-  identity, and TLS certificate across stop/start cycles.
+  identity, and TLS certificate across stop/start cycles, and across a switch
+  between the two modes.
 
 ### The subtle part
 
 Proxying over loopback is exactly the thing that could have broken this.
 9Router grants *local* requests elevated access: `/v1` without an API key,
-plus password reset and the process-spawning routes. A naive loopback proxy
-would hand every tailnet visitor those privileges.
+plus password reset and the process-spawning routes. A naive loopback hop
+would hand every visitor those privileges.
 
-It holds because `tailscale serve` sets `X-Forwarded-For` to the client's
-tailnet address unconditionally (`ipn/ipnlocal/serve.go`,
+In Tailscale mode it holds because `tailscale serve` sets `X-Forwarded-For` to
+the client's tailnet address unconditionally (`ipn/ipnlocal/serve.go`,
 `addProxyForwardedHeaders`), and 9Router's `custom-server.js` strips any
 client-supplied forwarding headers before stamping its own. Remote callers stay
 remote:
@@ -99,30 +120,60 @@ client 100.x → serve (TLS :443) → XFF=100.x, X-Forwarded-Proto=https
   → isLocalRequest() = false
 ```
 
-`verify.sh` asserts this after every deploy. If those checks ever fail, the
-central assumption has broken and you should stop before connecting providers.
+In SSH mode it holds because Docker's userland proxy re-originates the
+published connection, so the container sees the bridge gateway address rather
+than loopback.
 
-Two incidental wins over fronting it with Traefik: login rate limiting gets
-real per-client buckets instead of collapsing every caller into one, and
-`X-Forwarded-Proto: https` makes secure cookies behave correctly.
+`verify.sh` asserts this after every deploy, in both modes. If those checks
+ever fail, the central assumption has broken and you should stop before
+connecting providers.
 
 Headroom deliberately stays on the Docker bridge rather than in the shared
 namespace. Inside it, that third-party image could reach 9Router over loopback
 with no forwarding header and inherit local privileges. On the bridge it is
 treated as the remote client it is.
 
+## Which mode should I use?
+
+Default to Tailscale. It is less to run, it gives you a real HTTPS URL that
+every client accepts, and tailnet membership is a genuine second gate.
+
+Use SSH if Tailscale cannot connect from your network, or if you would rather
+not add a mesh VPN at all. Check first:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' --max-time 10 \
+  https://controlplane.tailscale.com/health
+```
+
+A status code means Tailscale works. `Connection reset by peer` means an SNI
+filter is killing the handshake, and no amount of configuration gets around
+it. Take the SSH path.
+
+The trade-off is honest in both directions. Tailscale gives you a real
+certificate and a stable hostname; SSH gives you zero extra infrastructure and
+survives filtering, at the cost of a tunnel to keep alive on each machine and
+no TLS for clients that insist on it.
+
 ## Contents
 
 | File | Purpose |
 | --- | --- |
-| `docker-compose.yml` | The stack: Tailscale sidecar, 9Router, Headroom |
+| `docker-compose.yml` | Tailscale mode: sidecar, 9Router, Headroom |
+| `docker-compose.ssh.yml` | SSH mode: 9Router bound to host loopback, Headroom |
 | `serve.json` | `tailscale serve` configuration, mounted via Dokploy |
-| `.env.example` | The three required secrets |
+| `.env.example` | The required secrets |
 | `verify.sh` | Post-deploy assertions that privileges did not leak |
-| `DEPLOY.md` | Full runbook |
+| `DEPLOY.md` | Full runbook for both modes |
 | `docs/DESIGN.md` | Design rationale, upstream review, rejected alternatives |
 
 ## Quick start
+
+Create a Dokploy **Compose** project from this repository, set **Compose Path**
+to your mode's file, leave **Isolated Deployments off**, add no domain, and set
+`JWT_SECRET` and `INITIAL_PASSWORD` in the Environment tab.
+
+**Tailscale mode**, `./docker-compose.yml`:
 
 1. In the Tailscale admin console, enable MagicDNS and HTTPS Certificates, then
    replace the default allow-everything policy with:
@@ -144,19 +195,25 @@ treated as the remote client it is.
    access to itself and your own machines nothing. On older tailnets that use
    `acls` instead of `grants`, see [DEPLOY.md](DEPLOY.md) for the equivalent.
 
-   Then generate a reusable, non-ephemeral auth key carrying `tag:nine-router`.
-2. Create a Dokploy **Compose** project from this repository. Leave
-   **Isolated Deployments off**, because it injects a `networks:` key that is
-   invalid alongside `network_mode`.
+2. Generate a reusable, non-ephemeral auth key carrying `tag:nine-router`, and
+   set it as `TS_AUTHKEY`.
 3. Add a Dokploy File Mount with **File Path** `serve.json` and the contents of
    `serve.json` as its content. Mount the file this way rather than from the
    repository, which Dokploy re-clones on every deploy.
-4. Set `TS_AUTHKEY`, `JWT_SECRET`, and `INITIAL_PASSWORD` in the Environment
-   tab.
-5. Deploy, then run `./verify.sh 9router.<your-tailnet>.ts.net`.
+4. Deploy, then `./verify.sh https://9router.<your-tailnet>.ts.net`.
 
-Full instructions, including the ACL, the update job, and client
-configuration, are in [DEPLOY.md](DEPLOY.md).
+**SSH mode**, `./docker-compose.ssh.yml`:
+
+1. Deploy. There is no step 2 on the server.
+2. On the VPS, confirm `ss -tlnp | grep 20128` shows `127.0.0.1:20128` and not
+   `0.0.0.0:20128`.
+3. On each client, `ssh -N -L 20128:127.0.0.1:20128 <user>@<vps>`, or the
+   `autossh` service in [DEPLOY.md](DEPLOY.md) for something that survives
+   sleep and reboots.
+4. `./verify.sh http://127.0.0.1:20128`.
+
+Full instructions, including client configuration for Claude Code and Hermes,
+the update job, and how to switch modes later, are in [DEPLOY.md](DEPLOY.md).
 
 > `INITIAL_PASSWORD` is not optional. 9Router falls back to `123456` when it is
 > unset.
@@ -164,16 +221,22 @@ configuration, are in [DEPLOY.md](DEPLOY.md).
 ## Requirements
 
 - A VPS running Dokploy
-- A Tailscale account (the free tier is sufficient)
-- Tailscale installed on each client machine. Windows, macOS, Linux, iOS, and
-  Android all have first-class clients
+- **Tailscale mode**: a Tailscale account (the free tier is sufficient) and the
+  client installed on each machine. Windows, macOS, Linux, iOS, and Android all
+  have first-class clients
+- **SSH mode**: SSH access to the VPS, and `autossh` if you want the tunnel to
+  stay up unattended
 
 ## Trade-offs
 
-Every device that uses 9Router must be on your tailnet. That is the cost of
-the design, and for a single-operator setup it is a small one. If you need
-access from a machine where you cannot install Tailscale, this repository is
-not the right starting point.
+In Tailscale mode, every device that uses 9Router must be on your tailnet. For
+a single-operator setup that is a small cost, but if you need access from a
+machine where you cannot install Tailscale, use SSH mode instead.
+
+In SSH mode, the tunnel is a moving part. If it drops, clients get connection
+refused rather than a graceful error. There is also no TLS for clients that
+require an `https://` base URL, and the security boundary becomes your SSH
+configuration, so key-only authentication is not optional.
 
 Tracking `:latest` with an unattended redeploy means an upstream compromise
 reaches your provider tokens without review. Pin a version tag and drop the

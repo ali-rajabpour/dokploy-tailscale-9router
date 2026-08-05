@@ -60,14 +60,18 @@ volume, provided it is not exposed publicly.
 | Public domain + Cloudflare Access on dashboard paths | Rejected. Leaks the origin IP, and `:443` answers the world, so anyone who finds the address reaches every other vhost on the box directly. |
 | Cloudflare Tunnel + Access | Rejected. IDEs cannot carry Access identity, so `/v1` needs a bypass rule and reverts to API-key-only. Decisive objection: TLS terminates at Cloudflare's edge, so prompts, source, and tokens transit their infrastructure in plaintext. |
 | Tailscale installed on the host | Rejected. Adds a root daemon and rewrites `/etc/resolv.conf` on a production server. |
-| **Tailscale as a sidecar container** | **Chosen.** |
+| **Tailscale as a sidecar container** | **Chosen as the default.** |
+| **SSH local port forward** | **Chosen as the fallback**, for networks where Tailscale is filtered. |
 
 The deciding argument: in every publicly-exposed option, `/v1` must stay
 reachable by clients that authenticate with a bearer token alone, so no
-identity proxy can gate it. Tailnet membership is the only mechanism that
-removes the exposure without breaking the clients.
+identity proxy can gate it. Removing the public exposure entirely is the only
+mechanism that works without breaking the clients. Tailnet membership does
+that; so does an SSH tunnel.
 
 ## Architecture
+
+Tailscale mode, one Dokploy Compose stack, three containers:
 
 ```
 tailnet ──TLS 443──> [tailscale sidecar] ──127.0.0.1:20128──> [9router]
@@ -75,8 +79,14 @@ tailnet ──TLS 443──> [tailscale sidecar] ──127.0.0.1:20128──> [9
                             └── docker bridge ────────────> [headroom :8787]
 ```
 
-One Dokploy Compose stack, three containers, no published host ports, no
-Traefik route, no `dokploy-network`, no public DNS record.
+SSH mode, two containers:
+
+```
+client ──SSH──> [vps 127.0.0.1:20128] ──bridge──> [9router] ──> [headroom :8787]
+```
+
+Neither publishes a port reachable from the internet, creates a Traefik route,
+joins `dokploy-network`, or needs a public DNS record.
 
 ### Namespace sharing
 
@@ -130,12 +140,76 @@ gets no implicit trust.
 The sidecar runs in userspace mode (`TS_USERSPACE=true`), requiring neither
 `NET_ADMIN` nor `/dev/net/tun`. `serve` functions normally in that mode.
 
+## The SSH access mode
+
+Added after the Tailscale build shipped, because Tailscale turned out to be
+filtered on the operator's network.
+
+### What the filter actually does
+
+Measured rather than assumed:
+
+| Observation | Result |
+| --- | --- |
+| DNS for `controlplane` / `login.tailscale.com` | Resolves correctly to the real anycast range (`192.200.0.0/24`). No poisoning. |
+| TCP 443 to those addresses | Connects. |
+| TLS ClientHello with SNI under `tailscale.com` | Immediate RST. |
+| Same SNI directed at an unrelated address | Also RST. |
+| Any other SNI to that same address | Answers normally. |
+| SNI `tailscale.io`, `headscale.net`, `wireguard.com`, `netbird.io` | All answer normally. |
+
+So it is an SNI keyword filter on one domain, not protocol fingerprinting and
+not IP blocking. Tailscale specifically is unreachable, because the control
+plane and every DERP relay share that domain. WireGuard as a protocol is not
+being touched.
+
+Headscale was considered, since a self-hosted control plane on an unrelated
+domain would not match the filter. Rejected: it does not support
+`tailscale serve` with HTTPS or per-node `tailscale cert`
+(juanfont/headscale#1921, tagged `tailscale-feature-gap`), the default DERP map
+still points at `*.tailscale.com` so a self-hosted DERP is needed too, and the
+result is a new public-facing control plane on the same production box the
+design was trying to keep clean. Three moving parts to replace one tunnel.
+
+SSH was already reachable on both 22 and 443, needs no new infrastructure, and
+adds no new listening service.
+
+### The source-address question
+
+The same loopback privilege problem appears in a different form. The port is
+published as `127.0.0.1:20128:20128`, and if the container observed the peer
+address as `127.0.0.1` it would grant every tunnelled request local
+privileges.
+
+It does not, because Docker's userland proxy accepts the connection on the
+host and opens a fresh one to the container, which therefore sees the bridge
+gateway address. `userland-proxy` defaults to enabled.
+
+If it has been disabled in `/etc/docker/daemon.json`, the DNAT path can
+preserve the original source address and the assumption breaks. That is the
+one host-level configuration this mode depends on, it is checkable with a
+single grep, and `verify.sh` fails loudly if it is wrong. Documented in
+`DEPLOY.md` §B4.
+
+### What is given up
+
+No TLS, so `AUTH_COOKIE_SECURE` is `false` and clients that require an
+`https://` base URL need a local terminator. No tailnet membership layer;
+the gate becomes the VPS's SSH configuration, which makes key-only
+authentication load-bearing rather than merely advisable. Residual risk: anyone
+with a shell on the VPS reaches 9Router over host loopback, leaving only the
+dashboard password and API key. Acceptable for a single-operator box, and worth
+stating plainly rather than burying.
+
+The two modes share volume names, so switching is a compose-path change plus a
+redeploy.
+
 ## Persistence
 
 | Volume | Contents | Rationale |
 | --- | --- | --- |
 | `9router-data` → `/app/data` | `db/data.sqlite`, provider OAuth tokens, API keys, `jwt-secret`, certificates, backups | the entire configuration |
-| `tailscale-state` → `/var/lib/tailscale` | node identity, serve config, TLS certificate | same hostname and certificate after restart, no re-authentication |
+| `tailscale-state` → `/var/lib/tailscale` | node identity, serve config, TLS certificate | Tailscale mode only: same hostname and certificate after restart, no re-authentication |
 
 The auth key is consumed on first run only. `--advertise-tags=tag:nine-router`
 disables key expiry for the node, so a stack left stopped for months still
@@ -160,13 +234,17 @@ becomes unacceptable: pin a version tag and delete the scheduled job.
 
 ## Verification
 
-`verify.sh` asserts, from a tailnet machine: `/v1/models` → 401, `/api/mcp/` →
-403, `/api/settings` → 401, `/dashboard` → 307. A 200 on the first means the
-central assumption has broken. On the host, `ss -tlnp | grep -E '20128|8787'`
-must return nothing.
+`verify.sh` takes the base URL of whichever mode is deployed and asserts:
+`/v1/models` → 401, `/api/mcp/` → 403, `/api/settings` → 401, `/dashboard` →
+307. A 200 on the first means the central assumption has broken.
+
+On the host, `ss -tlnp | grep -E '20128|8787'` must return nothing in Tailscale
+mode, and exactly `127.0.0.1:20128` in SSH mode. `0.0.0.0:20128` means the
+loopback prefix was lost from the `ports:` entry and the service is public.
 
 ## To confirm against your installed versions
 
 - Dokploy's File Mount path convention (`../files/serve.json`).
+- Dokploy's Compose Path field, which is what selects the access mode.
 - The exact Dokploy API endpoint for compose redeploy, via the panel's
   `/swagger`.
